@@ -1,0 +1,4 @@
+*.iss linguist-detectable=false
+*.html linguist-detectable=false
+*.manifest linguist-detectable=false
+*.rc linguist-detectable=false
