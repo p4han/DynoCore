@@ -1362,22 +1362,11 @@ fn ensure_autostart() {
         let exe_str = exe_path.to_string_lossy();
         let cmd = format!("\"{}\" --tray", exe_str);
 
-        // 1. Registry HKCU Run
+        // Registry HKCU Run
         let _ = Command::new("reg")
             .args(&["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Dyno", "/t", "REG_SZ", "/d", &cmd, "/f"])
             .creation_flags(0x08000000)
             .output();
-
-        // 2. User Startup folder (guaranteed to launch on Windows startup)
-        if let Some(appdata) = std::env::var_os("APPDATA") {
-            let startup_dir = std::path::PathBuf::from(appdata)
-                .join(r"Microsoft\Windows\Start Menu\Programs\Startup");
-            if startup_dir.exists() {
-                let bat_path = startup_dir.join("Dyno.cmd");
-                let content = format!("@start \"\" \"{}\" --tray\r\n", exe_str);
-                let _ = std::fs::write(bat_path, content);
-            }
-        }
     }
 }
 
@@ -1386,13 +1375,6 @@ fn remove_autostart() {
         .args(&["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Dyno", "/f"])
         .creation_flags(0x08000000)
         .output();
-
-    if let Some(appdata) = std::env::var_os("APPDATA") {
-        let startup_dir = std::path::PathBuf::from(appdata)
-            .join(r"Microsoft\Windows\Start Menu\Programs\Startup");
-        let bat_path = startup_dir.join("Dyno.cmd");
-        let _ = std::fs::remove_file(bat_path);
-    }
 }
 
 fn apply_safe_tweaks_silently() {
@@ -1443,14 +1425,14 @@ fn main() {
     }
 
     // 1. Single instance check
-    let _single = unsafe { CreateMutexW(null(), 0, wide("Dyno.SingleInstance").as_ptr()) };
+    let _single = unsafe { CreateMutexW(null(), 0, wide("DynoCore.SingleInstance").as_ptr()) };
     unsafe {
         if GetLastError() == ERROR_ALREADY_EXISTS {
             let h = FindWindowW(wide(CLASS).as_ptr(), null());
             if (h as usize) != 0 {
                 show(h);
+                return;
             }
-            return;
         }
     }
 
@@ -1519,9 +1501,6 @@ fn main() {
 
         // Read this PC's real state in the background so the "Now:" lines are accurate.
         refresh_facts(hwnd as usize);
-
-        // Auto-apply safe tweaks silently in background (no commands required)
-        apply_safe_tweaks_silently();
 
         // Immediately purge RAM & standby list on launch so everything starts 100% clean
         start_clean();

@@ -297,22 +297,19 @@ pub fn apply_update_and_restart(update_file: &Path, is_installer: bool) -> Resul
     let _ = fs::remove_file(&exe_staged);
 
     // Copy temp downloaded file into same directory as current exe
-    if let Err(_e) = fs::copy(update_file, &exe_staged) {
-        // Fallback: If copy into dir fails (e.g. permission), use external script
-        return apply_update_via_script(update_file, &current_exe);
-    }
+    fs::copy(update_file, &exe_staged).map_err(|e| format!("Copy staged failed: {}", e))?;
 
     // Rename current running exe -> dyno.exe.old (NTFS allows renaming running binaries)
-    if let Err(_) = fs::rename(&current_exe, &exe_old) {
+    if let Err(e) = fs::rename(&current_exe, &exe_old) {
         let _ = fs::remove_file(&exe_staged);
-        return apply_update_via_script(update_file, &current_exe);
+        return Err(format!("Rename current failed: {}", e));
     }
 
     // Move dyno.exe.new -> dyno.exe
-    if let Err(_) = fs::rename(&exe_staged, &current_exe) {
+    if let Err(e) = fs::rename(&exe_staged, &current_exe) {
         // Try restoring original
         let _ = fs::rename(&exe_old, &current_exe);
-        return apply_update_via_script(update_file, &current_exe);
+        return Err(format!("Move staged failed: {}", e));
     }
 
     // Cleanup temp download
@@ -321,23 +318,6 @@ pub fn apply_update_and_restart(update_file: &Path, is_installer: bool) -> Resul
     // Spawn new version with --update-cleanup
     let _ = Command::new(&current_exe)
         .arg("--update-cleanup")
-        .spawn();
-
-    std::process::exit(0);
-}
-
-/// Fallback updater using a small transient cmd process
-fn apply_update_via_script(update_file: &Path, current_exe: &Path) -> Result<(), String> {
-    let script = format!(
-        "timeout /t 1 /nobreak >nul & move /y \"{}\" \"{}\" >nul & start \"\" \"{}\" --update-cleanup",
-        update_file.to_string_lossy(),
-        current_exe.to_string_lossy(),
-        current_exe.to_string_lossy()
-    );
-
-    let _ = Command::new("cmd")
-        .args(&["/c", &script])
-        .creation_flags(0x08000000)
         .spawn();
 
     std::process::exit(0);
