@@ -39,6 +39,10 @@ pub fn used() -> (u64, u64) {
     }
 }
 
+pub fn is_elevated() -> bool {
+    enable_privilege("SeProfileSingleProcessPrivilege")
+}
+
 fn enable_privilege(name: &str) -> bool {
     unsafe {
         let mut token: HANDLE = 0 as _;

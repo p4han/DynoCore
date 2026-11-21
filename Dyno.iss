@@ -52,10 +52,12 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: deskto
 Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Parameters: "--tray"
 
 [Run]
+Filename: "{sys}\schtasks.exe"; Parameters: "/create /tn ""Dyno"" /tr """"{app}\{#MyAppExe}"""" --tray"" /sc onlogon /rl highest /f"; Flags: runhidden
 Filename: "{app}\{#MyAppExe}"; Parameters: "--tray"; Description: "Launch Dyno into system tray"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#MyAppExe}"; Flags: runhidden; RunOnceId: "DynoKill"
+Filename: "{sys}\schtasks.exe"; Parameters: "/delete /tn ""Dyno"" /f"; Flags: runhidden; RunOnceId: "DynoTaskDel"
 
 [UninstallDelete]
 Type: files; Name: "{commonstartup}\{#MyAppName}.lnk"

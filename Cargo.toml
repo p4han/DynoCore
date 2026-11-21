@@ -1,6 +1,6 @@
 [package]
 name = "dyno"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "DynoCore - Windows memory optimizer and system tweaker"
 
@@ -10,6 +10,7 @@ windows-sys = { version = "0.52", features = [
     "Win32_Security",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
+    "Win32_Networking_WinInet",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_SystemInformation",

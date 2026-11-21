@@ -5,6 +5,7 @@ mod mem;
 mod scan;
 mod settings;
 mod tweaks;
+mod update;
 
 use core::ffi::c_void;
 use std::mem::{size_of, zeroed};
@@ -38,6 +39,7 @@ const CMD_SHOW: usize = 1001;
 const CMD_CLEAN: usize = 1002;
 const CMD_EXIT: usize = 1003;
 const CMD_APPLY_SAFE: usize = 1004;
+const CMD_CHECK_UPDATE: usize = 1005;
 const COOLDOWN: Duration = Duration::from_secs(120);
 
 const fn rgb(r: u32, g: u32, b: u32) -> u32 {
@@ -96,6 +98,8 @@ const RESTART_NOW_BTN: R = R::new(386, 696, 520, 732);
 const RESTART_LATER_BTN: R = R::new(262, 696, 374, 732);
 const CONFIRM_YES_BTN: R = R::new(280, 400, 430, 440);
 const CONFIRM_NO_BTN: R = R::new(110, 400, 260, 440);
+const UPDATE_RETRY_BTN: R = R::new(280, 580, 430, 620);
+const UPDATE_CANCEL_BTN: R = R::new(110, 580, 260, 620);
 const TAB_Y: i32 = 164;
 const TAB_H: i32 = 30;
 const LIST_Y: i32 = 206;
@@ -109,6 +113,7 @@ enum UiMode {
     Confirm,
     Applying,
     Results,
+    Updating,
 }
 
 struct StepResult {
@@ -145,6 +150,14 @@ struct AppState {
     freed_temp: u64,
     reboot_count: usize,
 
+    // updating
+    update_ver: String,
+    update_status: String,
+    update_detail: String,
+    update_pct: f32,
+    update_step: u8,
+    update_err: Option<String>,
+
     fonts: [usize; 8],
     hicon: usize,
     icon: usize,
@@ -173,6 +186,12 @@ impl AppState {
             freed_ram: 0,
             freed_temp: 0,
             reboot_count: 0,
+            update_ver: String::new(),
+            update_status: String::new(),
+            update_detail: String::new(),
+            update_pct: 0.0,
+            update_step: 0,
+            update_err: None,
             fonts: [0; 8],
             hicon: 0,
             icon: 0,
@@ -582,6 +601,123 @@ unsafe fn draw_results(c: &Ctx, s: &AppState) {
     }
 }
 
+unsafe fn draw_updating(c: &Ctx, s: &AppState) {
+    draw_header(c, s.hicon);
+
+    let mc = R::new(25, 40, 515, 680);
+    c.rrect(mc, 12, CARD, Some(LINE));
+
+    // Circular badge with status symbol
+    let icon_rect = R::new(235, 75, 305, 145);
+    if s.update_step == 4 {
+        // Error
+        c.circle(icon_rect, RED_DIM, Some(RED));
+        c.text(icon_rect, "!", RED2, F_BIG, DT_CENTER);
+    } else if s.update_step == 3 {
+        // Done / Restarting
+        c.circle(icon_rect, GREEN_BG, Some(GREEN));
+        c.check(270, 110, GREEN);
+    } else {
+        // In progress / downloading
+        c.circle(icon_rect, RED_DIM, Some(RED));
+        c.text(icon_rect, "\u{2193}", WHITE, F_BIG, DT_CENTER);
+    }
+
+    // Title
+    let title = if s.update_ver.is_empty() {
+        "Updating DynoCore".to_string()
+    } else {
+        format!("Updating DynoCore to v{}", s.update_ver)
+    };
+    c.text(R::new(40, 160, 500, 195), &title, TXT, F_HEAD, DT_CENTER);
+
+    // Subtitle / Status
+    c.text(R::new(40, 200, 500, 230), &s.update_status, MUT, F_BODY, DT_CENTER);
+
+    // Progress bar
+    let bar_left = 55;
+    let bar_right = 485;
+    let bar_w = bar_right - bar_left;
+    let bar_y = 250;
+    let bar_h = 12;
+    c.rrect(R::new(bar_left, bar_y, bar_right, bar_y + bar_h), 6, LINE, None);
+    let fw = ((bar_w as f32 * s.update_pct / 100.0).round() as i32).clamp(0, bar_w);
+    if fw >= 6 {
+        c.rrect(R::new(bar_left, bar_y, bar_left + fw, bar_y + bar_h), 6, RED, None);
+    } else if fw > 0 {
+        c.fill(bar_left, bar_y, bar_left + fw, bar_y + bar_h, RED);
+    }
+
+    // Percentage & detail
+    c.text(
+        R::new(400, 272, 485, 296),
+        &format!("{:.0}%", s.update_pct),
+        TXT,
+        F_BOLD,
+        DT_RIGHT,
+    );
+    c.text(
+        R::new(55, 272, 395, 296),
+        &s.update_detail,
+        MUT,
+        F_SMALL,
+        DT_LEFT | DT_END_ELLIPSIS,
+    );
+
+    // Steps checklist card
+    let steps_box = R::new(45, 320, 495, 475);
+    c.rrect(steps_box, 8, BG, Some(LINE));
+
+    let step_labels = [
+        "Check latest release on GitHub",
+        "Download latest DynoCore binary",
+        "Install update and restart Dyno",
+    ];
+
+    for (i, label) in step_labels.iter().enumerate() {
+        let sy = 340 + i as i32 * 45;
+        let icon_status = if (s.update_step as usize) > i + 1 {
+            2 // Done
+        } else if (s.update_step as usize) == i + 1 {
+            1 // Working
+        } else if s.update_step == 4 && (s.update_step as usize) == i + 1 {
+            3 // Error
+        } else {
+            0 // Waiting
+        };
+        c.status_icon(75, sy + 15, icon_status);
+        c.text(
+            R::new(100, sy, 475, sy + 30),
+            label,
+            if icon_status == 0 { MUT } else { TXT },
+            F_BODY,
+            DT_LEFT | DT_END_ELLIPSIS,
+        );
+    }
+
+    // Error description or bottom message
+    if let Some(ref err) = s.update_err {
+        c.rrect(R::new(45, 500, 495, 550), 8, RED_DIM, Some(RED));
+        c.text(
+            R::new(55, 508, 485, 542),
+            err,
+            RED2,
+            F_SMALL,
+            DT_CENTER | DT_END_ELLIPSIS,
+        );
+        c.button(UPDATE_CANCEL_BTN, "Dismiss", false, false);
+        c.button(UPDATE_RETRY_BTN, "Retry", true, false);
+    } else {
+        c.text(
+            R::new(40, 540, 500, 570),
+            "Dyno will restart automatically once the update is installed.",
+            MUT,
+            F_SMALL,
+            DT_CENTER,
+        );
+    }
+}
+
 unsafe fn draw(hdc: HDC, hwnd: HWND) {
     let s = scale(hwnd);
     let app = APP.lock().unwrap();
@@ -592,6 +728,7 @@ unsafe fn draw(hdc: HDC, hwnd: HWND) {
         UiMode::Confirm => draw_confirm(&c, &app),
         UiMode::Applying => draw_applying(&c, &app),
         UiMode::Results => draw_results(&c, &app),
+        UiMode::Updating => draw_updating(&c, &app),
     }
 }
 
@@ -715,6 +852,7 @@ unsafe fn tray_menu(hwnd: HWND) {
     AppendMenuW(m, MF_STRING, CMD_SHOW, wide("Show Dyno").as_ptr());
     AppendMenuW(m, MF_STRING, CMD_CLEAN, wide("Clean memory now").as_ptr());
     AppendMenuW(m, MF_STRING, CMD_APPLY_SAFE, wide("Apply safe tweaks").as_ptr());
+    AppendMenuW(m, MF_STRING, CMD_CHECK_UPDATE, wide("Check for updates").as_ptr());
     AppendMenuW(m, MF_SEPARATOR, 0, null());
     AppendMenuW(m, MF_STRING, CMD_EXIT, wide("Exit").as_ptr());
     let mut pt: POINT = zeroed();
@@ -877,6 +1015,141 @@ fn restart_now() {
         .spawn();
 }
 
+fn start_auto_update(hwnd: HWND, manual: bool) {
+    if update::UPDATE_CHECK_IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    let h_usize = hwnd as usize;
+    std::thread::spawn(move || {
+        let hwnd_local = h_usize as HWND;
+        if manual {
+            {
+                let mut a = APP.lock().unwrap();
+                a.update_step = 1;
+                a.update_status = "Checking GitHub for updates...".to_string();
+                a.update_detail = "Connecting to repository...".to_string();
+                a.update_pct = 10.0;
+                a.update_err = None;
+                a.mode = UiMode::Updating;
+            }
+            unsafe {
+                ShowWindow(hwnd_local, SW_SHOW);
+                ShowWindow(hwnd_local, SW_RESTORE);
+                SetForegroundWindow(hwnd_local);
+                InvalidateRect(hwnd_local, null(), 0);
+            }
+        }
+
+        match update::check_for_update() {
+            Ok(Some(release)) => {
+                {
+                    let mut a = APP.lock().unwrap();
+                    a.update_ver = release.version.clone();
+                    a.update_step = 2; // downloading
+                    a.update_status = format!("Downloading update v{}...", release.version);
+                    a.update_detail = "Fetching update binary from GitHub...".to_string();
+                    a.update_pct = 15.0;
+                    a.update_err = None;
+                    a.mode = UiMode::Updating;
+                }
+                unsafe {
+                    ShowWindow(hwnd_local, SW_SHOW);
+                    ShowWindow(hwnd_local, SW_RESTORE);
+                    SetForegroundWindow(hwnd_local);
+                    InvalidateRect(hwnd_local, null(), 0);
+                }
+
+                let dl_res = update::download_update(&release.download_url, move |pct, downloaded, total| {
+                    let mut a = APP.lock().unwrap();
+                    a.update_pct = pct;
+                    if total > 0 {
+                        a.update_detail = format!("Downloaded {} / {}", human(downloaded), human(total));
+                    } else {
+                        a.update_detail = format!("Downloaded {}", human(downloaded));
+                    }
+                    drop(a);
+                    unsafe {
+                        PostMessageW(hwnd_local, WM_APP_REFRESH, 0, 0);
+                    }
+                });
+
+                match dl_res {
+                    Ok(temp_file) => {
+                        {
+                            let mut a = APP.lock().unwrap();
+                            a.update_step = 3; // installing
+                            a.update_status = "Installing update & restarting...".to_string();
+                            a.update_detail = "DynoCore is restarting into the new version...".to_string();
+                            a.update_pct = 100.0;
+                        }
+                        unsafe {
+                            InvalidateRect(hwnd_local, null(), 0);
+                        }
+                        std::thread::sleep(Duration::from_millis(800));
+
+                        if let Err(e) = update::apply_update_and_restart(&temp_file, release.is_installer) {
+                            let mut a = APP.lock().unwrap();
+                            a.update_step = 4;
+                            a.update_err = Some(format!("Failed to install update: {}", e));
+                            drop(a);
+                            unsafe {
+                                InvalidateRect(hwnd_local, null(), 0);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let mut a = APP.lock().unwrap();
+                        a.update_step = 4;
+                        a.update_err = Some(format!("Download failed: {}", e));
+                        drop(a);
+                        unsafe {
+                            InvalidateRect(hwnd_local, null(), 0);
+                        }
+                    }
+                }
+            }
+            Ok(None) => {
+                if manual {
+                    {
+                        let mut a = APP.lock().unwrap();
+                        a.update_step = 3;
+                        a.update_status = "DynoCore is up to date!".to_string();
+                        a.update_detail = format!("v{} is the latest version available.", env!("CARGO_PKG_VERSION"));
+                        a.update_pct = 100.0;
+                    }
+                    unsafe {
+                        InvalidateRect(hwnd_local, null(), 0);
+                    }
+                    std::thread::sleep(Duration::from_millis(1500));
+                    {
+                        let mut a = APP.lock().unwrap();
+                        if a.mode == UiMode::Updating {
+                            a.mode = UiMode::Dashboard;
+                        }
+                    }
+                    unsafe {
+                        InvalidateRect(hwnd_local, null(), 0);
+                    }
+                }
+            }
+            Err(e) => {
+                if manual {
+                    let mut a = APP.lock().unwrap();
+                    a.update_step = 4;
+                    a.update_err = Some(format!("Error checking updates: {}", e));
+                    drop(a);
+                    unsafe {
+                        InvalidateRect(hwnd_local, null(), 0);
+                    }
+                }
+            }
+        }
+
+        update::UPDATE_CHECK_IN_PROGRESS.store(false, Ordering::SeqCst);
+    });
+}
+
 unsafe fn on_timer(hwnd: HWND) {
     let (used, total) = mem::used();
     let (want_auto, tick) = {
@@ -893,6 +1166,9 @@ unsafe fn on_timer(hwnd: HWND) {
     if tick % 5 == 0 {
         tray_refresh(hwnd);
     }
+    if tick > 0 && tick % 14400 == 0 {
+        start_auto_update(hwnd, false);
+    }
     if IsWindowVisible(hwnd) != 0 {
         InvalidateRect(hwnd, null(), 0);
     }
@@ -907,6 +1183,17 @@ unsafe fn on_click(hwnd: HWND, lparam: LPARAM) {
     let mode = APP.lock().unwrap().mode;
 
     match mode {
+        UiMode::Updating => {
+            let has_err = APP.lock().unwrap().update_err.is_some();
+            if has_err {
+                if UPDATE_RETRY_BTN.contains(x, y) {
+                    start_auto_update(hwnd, true);
+                } else if UPDATE_CANCEL_BTN.contains(x, y) {
+                    APP.lock().unwrap().mode = UiMode::Dashboard;
+                    InvalidateRect(hwnd, null(), 0);
+                }
+            }
+        }
         UiMode::Confirm => {
             if CONFIRM_YES_BTN.contains(x, y) {
                 start_apply(h);
@@ -1033,6 +1320,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 CMD_SHOW => show(hwnd),
                 CMD_CLEAN => start_clean(),
                 CMD_APPLY_SAFE => apply_safe_tweaks_silently(),
+                CMD_CHECK_UPDATE => start_auto_update(hwnd, true),
                 CMD_EXIT => {
                     DestroyWindow(hwnd);
                 }
@@ -1073,6 +1361,14 @@ fn ensure_autostart() {
     if let Ok(exe_path) = std::env::current_exe() {
         let exe_str = exe_path.to_string_lossy();
         let cmd = format!("\"{}\" --tray", exe_str);
+
+        // 1. Task Scheduler: Run at logon with highest privileges (no UAC prompt on boot!)
+        let _ = Command::new("schtasks")
+            .args(&["/create", "/tn", "Dyno", "/tr", &cmd, "/sc", "onlogon", "/rl", "highest", "/f"])
+            .creation_flags(0x08000000)
+            .output();
+
+        // 2. Also register HKCU Run key as standard fallback
         let _ = Command::new("reg")
             .args(&["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Dyno", "/t", "REG_SZ", "/d", &cmd, "/f"])
             .creation_flags(0x08000000)
@@ -1081,6 +1377,10 @@ fn ensure_autostart() {
 }
 
 fn remove_autostart() {
+    let _ = Command::new("schtasks")
+        .args(&["/delete", "/tn", "Dyno", "/f"])
+        .creation_flags(0x08000000)
+        .output();
     let _ = Command::new("reg")
         .args(&["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Dyno", "/f"])
         .creation_flags(0x08000000)
@@ -1104,6 +1404,11 @@ fn apply_safe_tweaks_silently() {
 // ------------------------------------------------------------------------ main
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--update-cleanup") {
+        update::cleanup_previous_update();
+    }
+
     if args.iter().any(|a| a == "--clean") {
         let (before, total) = mem::used();
         let _ = mem::clean([true; 4]);
@@ -1129,19 +1434,67 @@ fn main() {
         return;
     }
 
-    std::thread::spawn(ensure_autostart);
-
+    // 1. Single instance check
+    let _single = unsafe { CreateMutexW(null(), 0, wide("Dyno.SingleInstance").as_ptr()) };
     unsafe {
-        let hinst = GetModuleHandleW(null());
-
-        let _single = CreateMutexW(null(), 0, wide("Dyno.SingleInstance").as_ptr());
         if GetLastError() == ERROR_ALREADY_EXISTS {
             let h = FindWindowW(wide(CLASS).as_ptr(), null());
             if (h as usize) != 0 {
                 show(h);
-                return;
             }
+            return;
         }
+    }
+
+    // 2. Check elevation to bypass UAC prompts via Task Scheduler
+    if !mem::is_elevated() {
+        let ran_task = Command::new("schtasks")
+            .args(&["/run", "/tn", "Dyno"])
+            .creation_flags(0x08000000)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if ran_task {
+            // Elevated instance launched via Task Scheduler without UAC prompt!
+            if !args.iter().any(|a| a == "--tray" || a == "--silent" || a == "--background" || a == "--autostart") {
+                for _ in 0..25 {
+                    std::thread::sleep(Duration::from_millis(100));
+                    unsafe {
+                        let h = FindWindowW(wide(CLASS).as_ptr(), null());
+                        if (h as usize) != 0 {
+                            show(h);
+                            break;
+                        }
+                    }
+                }
+            }
+            return;
+        } else {
+            // Task does not exist yet (first-time portable launch). Elevate once to set up task.
+            unsafe {
+                if let Ok(exe_path) = std::env::current_exe() {
+                    let exe_w = wide(&exe_path.to_string_lossy());
+                    let params_str = if args.iter().any(|a| a == "--tray") { "--tray" } else { "" };
+                    let params_w = wide(params_str);
+                    ShellExecuteW(
+                        0,
+                        wide("runas").as_ptr(),
+                        exe_w.as_ptr(),
+                        params_w.as_ptr(),
+                        null(),
+                        SW_SHOWNORMAL,
+                    );
+                }
+            }
+            return;
+        }
+    }
+
+    std::thread::spawn(ensure_autostart);
+
+    unsafe {
+        let hinst = GetModuleHandleW(null());
 
         {
             let mut a = APP.lock().unwrap();
@@ -1215,6 +1568,13 @@ fn main() {
             ShowWindow(hwnd, SW_SHOW);
             UpdateWindow(hwnd);
         }
+
+        // Auto-check for updates 3 seconds after startup in background
+        let h_update = hwnd as usize;
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(3));
+            start_auto_update(h_update as HWND, false);
+        });
 
         let mut m: MSG = zeroed();
         while GetMessageW(&mut m, 0 as _, 0, 0) > 0 {

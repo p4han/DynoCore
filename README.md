@@ -11,6 +11,8 @@
 - **Dynamic Auto-RAM Cleaner**: Continuously monitors physical memory in the background and automatically cleans working sets & standby lists whenever RAM usage hits **65%**.
 - **Always-Alive Background Operation**: Minimizes seamlessly to the Windows System Tray. Closing the window keeps Dyno running safely in the background.
 - **Silent Safe Optimizations on Logon**: Applies safe, non-destructive tweaks automatically upon system startup via an elevated scheduled task.
+- **Zero UAC Prompt & Reliable Autostart**: Runs with `asInvoker` manifest and registers with Windows Task Scheduler (`HighestAvailable`), eliminating annoying UAC prompts on every launch and ensuring 100% reliable autostart when your PC turns on.
+- **Automatic In-App Updates**: Seamlessly checks GitHub releases in the background, displays an integrated Updating screen with real-time download progress, and automatically applies updates and restarts.
 - **43 Granular System Tweaks**:
   - **Telemetry & Tracking**: Telemetry data collection, DiagTrack diagnostics, Feedback Hub, Customer Experience Improvement Program (CEIP).
   - **Gaming & Input**: Game DVR background recording, Game Bar presence, Pointer precision / mouse acceleration, Nagle's algorithm (TCP latency optimization).
@@ -29,15 +31,15 @@ Dyno is engineered to be as lightweight and responsive as possible:
 - **Language**: 100% Rust (2021 edition).
 - **GUI Engine**: Direct Win32 GDI with custom double-buffered software rendering (`WM_PAINT`, `CreateCompatibleDC`, `BitBlt`).
 - **Memory API**: Directly invokes Windows NT kernel memory list flushing (`NtSetSystemInformation` with `SystemMemoryListInformation`).
-- **Binary Footprint**: ~450 KB self-contained `.exe` with embedded icon and execution manifest (`requireAdministrator`).
+- **Binary Footprint**: ~480 KB self-contained `.exe` with embedded icon, native WinINet updater, and execution manifest (`asInvoker`).
 
 ---
 
 ## 📦 Download & Installation
 
-1. Grab the latest `dyno.exe` from the [Releases](https://github.com/) section.
-2. Place `dyno.exe` anywhere (e.g. `C:\Program Files\Dyno` or your Utilities folder).
-3. Double-click to launch. Click **Yes** on the UAC prompt to allow kernel memory optimization.
+1. Grab the latest `dyno.exe` or `Dyno-Setup-x64.exe` from the [Releases](https://github.com/p4han/DynoCore/releases) section.
+2. Place `dyno.exe` anywhere (or run setup to install to Program Files).
+3. On first launch, Dyno automatically establishes its elevated logon task. From then on, it starts automatically on PC boot with zero UAC prompts!
 
 ---
 
