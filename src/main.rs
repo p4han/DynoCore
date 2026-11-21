@@ -1362,29 +1362,37 @@ fn ensure_autostart() {
         let exe_str = exe_path.to_string_lossy();
         let cmd = format!("\"{}\" --tray", exe_str);
 
-        // 1. Task Scheduler: Run at logon with highest privileges (no UAC prompt on boot!)
-        let _ = Command::new("schtasks")
-            .args(&["/create", "/tn", "Dyno", "/tr", &cmd, "/sc", "onlogon", "/rl", "highest", "/f"])
-            .creation_flags(0x08000000)
-            .output();
-
-        // 2. Also register HKCU Run key as standard fallback
+        // 1. Registry HKCU Run
         let _ = Command::new("reg")
             .args(&["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Dyno", "/t", "REG_SZ", "/d", &cmd, "/f"])
             .creation_flags(0x08000000)
             .output();
+
+        // 2. User Startup folder (guaranteed to launch on Windows startup)
+        if let Some(appdata) = std::env::var_os("APPDATA") {
+            let startup_dir = std::path::PathBuf::from(appdata)
+                .join(r"Microsoft\Windows\Start Menu\Programs\Startup");
+            if startup_dir.exists() {
+                let bat_path = startup_dir.join("Dyno.cmd");
+                let content = format!("@start \"\" \"{}\" --tray\r\n", exe_str);
+                let _ = std::fs::write(bat_path, content);
+            }
+        }
     }
 }
 
 fn remove_autostart() {
-    let _ = Command::new("schtasks")
-        .args(&["/delete", "/tn", "Dyno", "/f"])
-        .creation_flags(0x08000000)
-        .output();
     let _ = Command::new("reg")
         .args(&["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run", "/v", "Dyno", "/f"])
         .creation_flags(0x08000000)
         .output();
+
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let startup_dir = std::path::PathBuf::from(appdata)
+            .join(r"Microsoft\Windows\Start Menu\Programs\Startup");
+        let bat_path = startup_dir.join("Dyno.cmd");
+        let _ = std::fs::remove_file(bat_path);
+    }
 }
 
 fn apply_safe_tweaks_silently() {
@@ -1441,51 +1449,6 @@ fn main() {
             let h = FindWindowW(wide(CLASS).as_ptr(), null());
             if (h as usize) != 0 {
                 show(h);
-            }
-            return;
-        }
-    }
-
-    // 2. Check elevation to bypass UAC prompts via Task Scheduler
-    if !mem::is_elevated() {
-        let ran_task = Command::new("schtasks")
-            .args(&["/run", "/tn", "Dyno"])
-            .creation_flags(0x08000000)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-
-        if ran_task {
-            // Elevated instance launched via Task Scheduler without UAC prompt!
-            if !args.iter().any(|a| a == "--tray" || a == "--silent" || a == "--background" || a == "--autostart") {
-                for _ in 0..25 {
-                    std::thread::sleep(Duration::from_millis(100));
-                    unsafe {
-                        let h = FindWindowW(wide(CLASS).as_ptr(), null());
-                        if (h as usize) != 0 {
-                            show(h);
-                            break;
-                        }
-                    }
-                }
-            }
-            return;
-        } else {
-            // Task does not exist yet (first-time portable launch). Elevate once to set up task.
-            unsafe {
-                if let Ok(exe_path) = std::env::current_exe() {
-                    let exe_w = wide(&exe_path.to_string_lossy());
-                    let params_str = if args.iter().any(|a| a == "--tray") { "--tray" } else { "" };
-                    let params_w = wide(params_str);
-                    ShellExecuteW(
-                        0,
-                        wide("runas").as_ptr(),
-                        exe_w.as_ptr(),
-                        params_w.as_ptr(),
-                        null(),
-                        SW_SHOWNORMAL,
-                    );
-                }
             }
             return;
         }

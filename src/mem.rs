@@ -39,6 +39,7 @@ pub fn used() -> (u64, u64) {
     }
 }
 
+#[allow(dead_code)]
 pub fn is_elevated() -> bool {
     enable_privilege("SeProfileSingleProcessPrivilege")
 }
